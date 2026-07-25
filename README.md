@@ -1,85 +1,67 @@
-# OpenCode SSH Jump Server
+# OpenCode AI Agent — SSH Access
 
-A minimal Fly.io jump server that enables Termius SSH access to a Hugging Face Space via a reverse SSH tunnel.
+SSH tunnel setup for reaching the OpenCode HF Space from Termius.
 
-## Architecture
+## How it works
 
 ```
 Termius
-  │  SSH → <this-app>.fly.dev:2222
+  │  SSH → opencode-hf.serveo.net:22
   ▼
-Fly.io jump server  (GatewayPorts=yes, always-on)
+serveo.net  (free relay, no account needed)
   │  reverse tunnel opened outbound by HF Space on startup
   ▼
 sshd on localhost:22 inside HF Space
 ```
 
-HF Spaces only allow outbound connections — this jump server receives the
-reverse tunnel from the Space and exposes it on port 2222 for Termius.
+The HF Space opens an outbound SSH connection to `serveo.net` on startup.
+This creates a public tunnel endpoint that Termius connects to.
+HF does not block outbound SSH — no third-party binary runs inside the container.
 
-## Deploy to Fly.io
+## No external deployment needed
 
-### 1. Install flyctl
+Unlike the Fly.io approach, this requires:
+- ✅ No Fly.io account
+- ✅ No API tokens
+- ✅ No separate server to deploy
+- ✅ No extra billing
 
-```bash
-# macOS
-brew install flyctl
+## HF Space Secrets required
 
-# Linux / WSL
-curl -L https://fly.io/install.sh | sh
-```
-
-### 2. Generate SSH keypair (run once on your machine)
-
-```bash
-ssh-keygen -t ed25519 -f jump_key -N ""
-# jump_key     → private key → HF Space secret JUMP_SSH_KEY
-# jump_key.pub → public key  → Fly.io secret  JUMP_AUTHORIZED_KEY
-```
-
-### 3. Create and deploy the Fly.io app
-
-```bash
-fly auth login
-fly launch --no-deploy    # reads fly.toml, creates the app
-fly secrets set JUMP_AUTHORIZED_KEY="$(cat jump_key.pub)"
-fly deploy
-```
-
-Note the app hostname (e.g. `opencode-jump.fly.dev`).
-
-### 4. Add secrets to your HF Space
+Set these in your HF Space → Settings → Variables and secrets:
 
 | Secret | Value |
 |--------|-------|
-| `SSH_PASSWORD` | Password Termius uses to log in |
-| `JUMP_HOST` | `opencode-jump.fly.dev` |
-| `JUMP_SSH_KEY` | Full contents of `jump_key` (private, including header/footer lines) |
+| `SSH_PASSWORD` | Password Termius uses to log in (already set) |
 
-### 5. Keep Fly.io awake with UptimeRobot
+## Termius configuration
 
-- URL: `http://opencode-jump.fly.dev`
-- Interval: every 5 minutes
+After the Space starts, check Space logs for the `[TUNNEL]` block:
 
-### 6. Configure Termius
+```
+[TUNNEL] Termius host     : opencode-hf.serveo.net
+[TUNNEL] Termius port     : 22
+[TUNNEL] Termius username : root
+[TUNNEL] Termius password : your SSH_PASSWORD secret
+```
 
+In Termius:
 | Field | Value |
 |-------|-------|
-| Host | `opencode-jump.fly.dev` |
-| Port | `2222` |
+| Host | `opencode-hf.serveo.net` |
+| Port | `22` |
 | Username | `root` |
 | Password | your `SSH_PASSWORD` value |
 
-## Fly.io secrets
+## Fallback
 
-| Secret | Description |
-|--------|-------------|
-| `JUMP_AUTHORIZED_KEY` | Public key from `jump_key.pub` — allows HF Space to authenticate |
+If `opencode-hf.serveo.net` is already taken by another user, the Space
+falls back to a random port on `serveo.net`. The actual host/port is always
+printed to Space logs on startup — check the `[TUNNEL]` section.
 
-## Ports
+## Fly.io jump server (archived)
 
-| Port | Purpose |
-|------|---------|
-| 22 | HF Space dials in to establish reverse tunnel |
-| 2222 | Termius connects through to reach HF Space sshd |
-| 8080 | HTTP health endpoint (UptimeRobot ping target) |
+The files `Dockerfile`, `entrypoint.sh`, and `fly.toml` in this repo
+are the original Fly.io jump server approach. They are kept for reference
+but are no longer needed — the serveo.net approach replaces them with
+zero infrastructure overhead.
